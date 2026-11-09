@@ -541,3 +541,36 @@ async function loadDashboard() {
 </body>
 </html>
 """)
+def ensure_admin():
+    email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("ADMIN_PASSWORD", "")
+
+    if not email and not password:
+        return
+
+    if not email or not password:
+        raise RuntimeError("Both ADMIN_EMAIL and ADMIN_PASSWORD must be configured")
+
+    if len(password) < 16:
+        raise RuntimeError("ADMIN_PASSWORD must be at least 16 characters")
+
+    with db() as con:
+        existing = con.execute(
+            "SELECT id, role FROM users WHERE email=?",
+            (email,)
+        ).fetchone()
+
+        if existing:
+            if existing["role"] != "admin":
+                raise RuntimeError(
+                    "ADMIN_EMAIL already belongs to a non-admin account"
+                )
+            return
+
+        con.execute(
+            "INSERT INTO users(id,email,password_hash,role) VALUES(?,?,?,?)",
+            (str(uuid.uuid4()), email, ph.hash(password), "admin")
+        )
+
+
+ensure_admin()

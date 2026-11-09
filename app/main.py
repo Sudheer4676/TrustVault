@@ -357,6 +357,7 @@ def admin_dashboard(user=Depends(require_role("admin"))):
         "recent_activity": [dict(row) for row in recent_activity]
     }
 
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard_page():
     return HTMLResponse("""
@@ -402,6 +403,10 @@ def admin_dashboard_page():
             color: white;
             cursor: pointer;
         }
+        button:disabled {
+            background: #64748b;
+            cursor: not-allowed;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -421,11 +426,23 @@ def admin_dashboard_page():
 <p>Secure Document Management System</p>
 
 <div class="card">
-    <h3>Admin Authentication</h3>
-    <input id="token" type="password"
-           placeholder="Paste Admin access token">
-    <button onclick="loadDashboard()">Load Dashboard</button>
-    <p id="status">Enter your Admin token to continue.</p>
+    <h3>Admin Login</h3>
+
+    <input id="email" type="email"
+           placeholder="Admin email"
+           autocomplete="username">
+
+    <input id="password" type="password"
+           placeholder="Admin password"
+           autocomplete="current-password">
+
+    <br>
+
+    <button id="login-button" onclick="loginAndLoadDashboard()">
+        Login and Load Dashboard
+    </button>
+
+    <p id="status">Enter your Admin credentials to continue.</p>
 </div>
 
 <div class="cards">
@@ -452,7 +469,12 @@ def admin_dashboard_page():
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Name</th><th>Category</th><th>Owner ID</th><th>Date</th></tr>
+                <tr>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Owner ID</th>
+                    <th>Date</th>
+                </tr>
             </thead>
             <tbody id="document-list"></tbody>
         </table>
@@ -464,7 +486,12 @@ def admin_dashboard_page():
     <div class="table-wrap">
         <table>
             <thead>
-                <tr><th>Actor ID</th><th>Action</th><th>Document ID</th><th>Date</th></tr>
+                <tr>
+                    <th>Actor ID</th>
+                    <th>Action</th>
+                    <th>Document ID</th>
+                    <th>Date</th>
+                </tr>
             </thead>
             <tbody id="activity-list"></tbody>
         </table>
@@ -472,43 +499,91 @@ def admin_dashboard_page():
 </div>
 
 <script>
-async function loadDashboard() {
-    const token = document.getElementById("token").value.trim();
+async function loginAndLoadDashboard() {
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
     const status = document.getElementById("status");
+    const button = document.getElementById("login-button");
 
-    if (!token) {
-        status.textContent = "Please enter your Admin token.";
+    if (!email || !password) {
+        status.textContent = "Please enter both email and password.";
         return;
     }
 
-    status.textContent = "Loading dashboard...";
+    button.disabled = true;
+    status.textContent = "Signing in...";
 
     try {
-        const response = await fetch("/admin/dashboard", {
-            headers: { "Authorization": "Bearer " + token }
+        const loginResponse = await fetch("/auth/login", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                email: email,
+                password: password
+            })
         });
 
-        if (!response.ok) {
-            status.textContent = "Access failed: HTTP " + response.status;
+        const loginData = await loginResponse.json();
+
+        if (!loginResponse.ok) {
+            status.textContent =
+                loginData.detail || "Login failed: HTTP " + loginResponse.status;
             return;
         }
 
+        if (loginData.role !== "admin") {
+            status.textContent =
+                "Access denied. An Admin account is required.";
+            return;
+        }
+
+        const token = loginData.access_token;
+
+        document.getElementById("password").value = "";
+
+        status.textContent = "Login successful. Loading dashboard...";
+
+        const response = await fetch("/admin/dashboard", {
+            headers: {
+                "Authorization": "Bearer " + token
+            }
+        });
+
         const data = await response.json();
 
-        document.getElementById("users").textContent = data.total_users;
-        document.getElementById("documents").textContent = data.total_documents;
-        document.getElementById("owners").textContent = data.total_owners;
-        document.getElementById("viewers").textContent = data.total_viewers;
+        if (!response.ok) {
+            status.textContent =
+                data.detail || "Dashboard failed: HTTP " + response.status;
+            return;
+        }
+
+        document.getElementById("users").textContent =
+            data.total_users ?? 0;
+
+        document.getElementById("documents").textContent =
+            data.total_documents ?? 0;
+
+        document.getElementById("owners").textContent =
+            data.total_owners ?? 0;
+
+        document.getElementById("viewers").textContent =
+            data.total_viewers ?? 0;
 
         function addRows(id, items, fields) {
             const body = document.getElementById(id);
             body.replaceChildren();
 
+            items = items || [];
+
             if (items.length === 0) {
                 const row = document.createElement("tr");
                 const cell = document.createElement("td");
+
                 cell.textContent = "No records found";
                 cell.colSpan = fields.length;
+
                 row.appendChild(cell);
                 body.appendChild(row);
                 return;
@@ -516,24 +591,35 @@ async function loadDashboard() {
 
             items.forEach(item => {
                 const row = document.createElement("tr");
+
                 fields.forEach(field => {
                     const cell = document.createElement("td");
                     cell.textContent = item[field] ?? "-";
                     row.appendChild(cell);
                 });
+
                 body.appendChild(row);
             });
         }
 
-        addRows("document-list", data.recent_documents,
-            ["name", "category", "owner_id", "created_at"]);
+        addRows(
+            "document-list",
+            data.recent_documents,
+            ["name", "category", "owner_id", "created_at"]
+        );
 
-        addRows("activity-list", data.recent_activity,
-            ["actor_id", "action", "document_id", "created_at"]);
+        addRows(
+            "activity-list",
+            data.recent_activity,
+            ["actor_id", "action", "document_id", "created_at"]
+        );
 
         status.textContent = "Dashboard loaded successfully.";
+
     } catch (error) {
         status.textContent = "Unable to connect to the server.";
+    } finally {
+        button.disabled = false;
     }
 }
 </script>
@@ -541,6 +627,7 @@ async function loadDashboard() {
 </body>
 </html>
 """)
+
 def ensure_admin():
     email = os.getenv("ADMIN_EMAIL", "").strip().lower()
     password = os.getenv("ADMIN_PASSWORD", "")
@@ -574,3 +661,4 @@ def ensure_admin():
 
 
 ensure_admin()
+
